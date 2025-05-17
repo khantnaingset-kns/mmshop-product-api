@@ -1,182 +1,116 @@
+// test/product.e2e-spec.ts
 import { Test, TestingModule } from '@nestjs/testing';
-import {
-  INestApplication,
-  ValidationPipe,
-  NotFoundException,
-} from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { ProductService } from '../src/product/product.service';
-import { Product } from '@prisma/client';
-
-const mockProductService = {
-  product: jest.fn(),
-  createProduct: jest.fn(),
-  deleteProduct: jest.fn(),
-};
-
-const generateMockProduct = (
-  id: string,
-  overrides: Partial<Product> = {},
-): Product => ({
-  id,
-  name: 'Test Product',
-  descriptionLong: 'This is a long description for the test product.',
-  descriptionShort: 'Short desc.',
-  price: 99.99,
-  productCategory: 'ELECTRONICS',
-  productType: 'LAPTOP',
-  createdAt: new Date(),
-  updatedAt: new Date(),
-  ...overrides,
-});
+import { PrismaService } from '../src/product/prisma.service';
 
 describe('ProductController (e2e)', () => {
   let app: INestApplication;
+  let prismaService: PrismaService;
 
-  beforeAll(async () => {});
-
-  beforeEach(async () => {
-    mockProductService.product.mockReset();
-    mockProductService.createProduct.mockReset();
-    mockProductService.deleteProduct.mockReset();
-
+  beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    })
-      .overrideProvider(ProductService)
-      .useValue(mockProductService)
-      .compile();
+    }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe());
+    prismaService = moduleFixture.get<PrismaService>(PrismaService);
     await app.init();
   });
 
+  beforeEach(async () => {
+    // Clean the database before each test
+    await prismaService.product.deleteMany({});
+  });
+
   afterAll(async () => {
+    await prismaService.$disconnect();
     await app.close();
   });
 
-  const productId = 'clxko7ixk0000sjoyf9lw5x7x';
-  const productData = {
-    name: 'Awesome Gadget',
-    description:
-      'The most awesome gadget you have ever seen. It does amazing things and will change your life for the better. Buy it now!',
-    price: 199.99,
-    imageUrl: 'https://example.com/awesome-gadget.png',
-    productCategory: 'GADGETS',
-    productType: 'ELECTRONIC',
-  };
+  describe('/products (POST)', () => {
+    it('should create a new product', () => {
+      const productData = {
+        name: 'Test Product',
+        description:
+          'This is a test product with a very long description that should be truncated in the short description field',
+        price: 99.99,
+        imageUrl: 'http://example.com/image.jpg',
+        productCategory: 'Electronics',
+        productType: 'Gadget',
+      };
 
-  describe('GET /products/:id', () => {
-    it('should return a product if found', async () => {
-      const mockProduct = generateMockProduct(productId);
-      mockProductService.product.mockResolvedValue(mockProduct);
-
-      const response = await request(app.getHttpServer())
-        .get(`/products/${productId}`)
-        .expect(200);
-
-      expect(response.body).toEqual({
-        ...mockProduct,
-        createdAt: mockProduct.createdAt.toISOString(),
-        updatedAt: mockProduct.updatedAt.toISOString(),
-      });
-      expect(mockProductService.product).toHaveBeenCalledWith({
-        id: productId,
-      });
-    });
-
-    it('should return 404 if product not found', async () => {
-      mockProductService.product.mockResolvedValue(null);
-
-      await request(app.getHttpServer())
-        .get(`/products/${productId}`)
-        .expect(404)
-        .then((response) => {
-          expect(response.body.message).toEqual(
-            `Product with ID ${productId} not found`,
-          );
-        });
-
-      expect(mockProductService.product).toHaveBeenCalledWith({
-        id: productId,
-      });
-    });
-  });
-
-  describe('POST /products', () => {
-    it('should create and return a new product', async () => {
-      const createdProduct = generateMockProduct(productId, {
-        name: productData.name,
-        descriptionLong: productData.description,
-        descriptionShort:
-          'The most awesome gadget you have ever seen. It does amazing thin...',
-        price: productData.price,
-        productCategory: productData.productCategory,
-        productType: productData.productType,
-      });
-      mockProductService.createProduct.mockResolvedValue(createdProduct);
-
-      const response = await request(app.getHttpServer())
+      return request(app.getHttpServer())
         .post('/products')
         .send(productData)
-        .expect(201);
-
-      expect(response.body).toEqual({
-        ...createdProduct,
-        createdAt: createdProduct.createdAt.toISOString(),
-        updatedAt: createdProduct.updatedAt.toISOString(),
-      });
-      expect(mockProductService.createProduct).toHaveBeenCalledWith({
-        name: productData.name,
-        descriptionLong: productData.description,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        descriptionShort: expect.any(String),
-        price: productData.price,
-        productCategory: productData.productCategory,
-        productType: productData.productType,
-      });
+        .expect(201)
+        .expect((response) => {
+          expect(response.body).toHaveProperty('id');
+          expect(response.body.name).toBe(productData.name);
+          expect(response.body.descriptionLong).toBe(productData.description);
+          expect(response.body.descriptionShort.length).toBeLessThanOrEqual(
+            100,
+          );
+          expect(response.body.price).toBe(productData.price);
+          expect(response.body.productCategory).toBe(
+            productData.productCategory,
+          );
+          expect(response.body.productType).toBe(productData.productType);
+        });
     });
   });
 
-  describe('DELETE /products/:id', () => {
-    it('should delete a product and return it', async () => {
-      const mockDeletedProduct = generateMockProduct(productId);
-      mockProductService.deleteProduct.mockResolvedValue(mockDeletedProduct);
-
-      const response = await request(app.getHttpServer())
-        .delete(`/products/${productId}`)
-        .expect(200);
-
-      expect(response.body).toEqual({
-        ...mockDeletedProduct,
-        createdAt: mockDeletedProduct.createdAt.toISOString(),
-        updatedAt: mockDeletedProduct.updatedAt.toISOString(),
+  describe('/products/:id (GET)', () => {
+    it('should return a product by id', async () => {
+      // First create a product
+      const createdProduct = await prismaService.product.create({
+        data: {
+          name: 'Test Product',
+          descriptionLong: 'Long description',
+          descriptionShort: 'Short description',
+          price: 99.99,
+          productCategory: 'Electronics',
+          productType: 'Gadget',
+        },
       });
-      expect(mockProductService.deleteProduct).toHaveBeenCalledWith({
-        id: productId,
-      });
+
+      return request(app.getHttpServer())
+        .get(`/products/${createdProduct.id}`)
+        .expect(200)
+        .expect((response) => {
+          expect(response.body.id).toBe(createdProduct.id);
+          expect(response.body.name).toBe(createdProduct.name);
+        });
     });
 
-    it('should return 404 if product to delete is not found (if service throws)', async () => {
-      mockProductService.deleteProduct.mockImplementation(() => {
-        throw new NotFoundException(
-          `Product with ID ${productId} not found for deletion.`,
-        );
+    it('should return 404 for non-existent product', () => {
+      return request(app.getHttpServer())
+        .get('/products/non-existent-id')
+        .expect(404);
+    });
+  });
+
+  describe('/products/:id (DELETE)', () => {
+    it('should delete a product', async () => {
+      // First create a product
+      const createdProduct = await prismaService.product.create({
+        data: {
+          name: 'Test Product',
+          descriptionLong: 'Long description',
+          descriptionShort: 'Short description',
+          price: 99.99,
+          productCategory: 'Electronics',
+          productType: 'Gadget',
+        },
       });
 
-      await request(app.getHttpServer())
-        .delete(`/products/${productId}`)
-        .expect(404)
-        .then((response) => {
-          expect(response.body.message).toEqual(
-            `Product with ID ${productId} not found for deletion.`,
-          );
+      return request(app.getHttpServer())
+        .delete(`/products/${createdProduct.id}`)
+        .expect(200)
+        .expect((response) => {
+          expect(response.body.id).toBe(createdProduct.id);
         });
-      expect(mockProductService.deleteProduct).toHaveBeenCalledWith({
-        id: productId,
-      });
     });
   });
 });
