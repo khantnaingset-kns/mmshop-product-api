@@ -8,7 +8,6 @@ import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { ProductService } from '../src/product/product.service';
 import { Product } from '@prisma/client';
-import { PrismaClient } from '@prisma/client';
 
 const mockProductService = {
   product: jest.fn(),
@@ -34,7 +33,6 @@ const generateMockProduct = (
 
 describe('ProductController (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaClient;
 
   beforeAll(async () => {});
 
